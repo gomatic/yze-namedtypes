@@ -27,7 +27,7 @@ var Analyzer = &analysis.Analyzer{
 var Registration = goyze.Registration{
 	Name:       "namedtypes",
 	Categories: []goyze.Category{"types"},
-	URL:        "https://docs.gomatic.dev/yze/go/namedtypes",
+	URL:        "https://docs.gomatic.dev/yze/namedtypes",
 	Analyzer:   Analyzer,
 }
 
@@ -51,14 +51,26 @@ func checkParams(pass *analysis.Pass, params *ast.FieldList) {
 	}
 }
 
-// barePrimitiveName returns the identifier name when expr is a bare predeclared
-// primitive type, and false otherwise.
+// barePrimitiveName returns the identifier name when expr names a predeclared
+// primitive type by its predeclared name, and false otherwise. The exemption is
+// resolved through the identifier's declaring object rather than the type it
+// presents, so it holds regardless of the gotypesalias GODEBUG setting (under
+// which an alias to a primitive may otherwise surface as a bare *types.Basic):
+//   - a named domain type — a defined type (type Count int) or an alias (type
+//     Celsius = float64) — is declared in a package (Pkg() != nil), so exempt;
+//   - a predeclared object lives in the universe scope (Pkg() == nil); only one
+//     whose underlying type is a primitive (excludes the predeclared error/any
+//     interfaces, while still catching the byte/rune primitive aliases) is flagged.
 func barePrimitiveName(pass *analysis.Pass, expr ast.Expr) (string, bool) {
 	ident, ok := expr.(*ast.Ident)
 	if !ok {
 		return "", false
 	}
-	if _, ok := pass.TypesInfo.TypeOf(ident).(*types.Basic); !ok {
+	obj := pass.TypesInfo.ObjectOf(ident)
+	if obj.Pkg() != nil {
+		return "", false
+	}
+	if _, ok := obj.Type().Underlying().(*types.Basic); !ok {
 		return "", false
 	}
 	return ident.Name, true
