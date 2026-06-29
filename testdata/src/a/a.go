@@ -22,6 +22,10 @@ func withBareBool(b bool) {} // want `parameter type bool is a bare primitive; d
 // underlying type is a primitive.
 func withBareByte(b byte) {} // want `parameter type byte is a bare primitive; define a named domain type`
 
+// variadic takes a variadic bare primitive; the element type after the `...` is
+// a bare primitive and must be flagged at the element type.
+func variadic(nums ...int) {} // want `parameter type int is a bare primitive; define a named domain type`
+
 // withNamed takes a defined named domain type and must not be flagged.
 func withNamed(c Count) {}
 

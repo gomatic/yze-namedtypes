@@ -45,10 +45,22 @@ func run(pass *analysis.Pass) (any, error) {
 // checkParams reports each parameter whose type is a bare primitive.
 func checkParams(pass *analysis.Pass, params *ast.FieldList) {
 	for _, field := range params.List {
-		if name, ok := barePrimitiveName(pass, field.Type); ok {
-			pass.Reportf(field.Type.Pos(), "parameter type %s is a bare primitive; define a named domain type", name)
+		typ := paramType(field.Type)
+		if name, ok := barePrimitiveName(pass, typ); ok {
+			pass.Reportf(typ.Pos(), "parameter type %s is a bare primitive; define a named domain type", name)
 		}
 	}
+}
+
+// paramType yields the element type of a variadic parameter (the type after the
+// `...`), or the field's type unchanged otherwise, so a variadic bare primitive
+// (func f(nums ...int)) is checked and reported at its element type rather than
+// being skipped because its field type is an *ast.Ellipsis.
+func paramType(expr ast.Expr) ast.Expr {
+	if ellipsis, ok := expr.(*ast.Ellipsis); ok {
+		return ellipsis.Elt
+	}
+	return expr
 }
 
 // barePrimitiveName returns the identifier name when expr names a predeclared
