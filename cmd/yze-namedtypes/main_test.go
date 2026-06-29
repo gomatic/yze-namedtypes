@@ -3,10 +3,11 @@ package main
 import (
 	"testing"
 
-	namedtypes "github.com/gomatic/yze-go-namedtypes"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/tools/go/analysis"
+
+	namedtypes "github.com/gomatic/yze-namedtypes"
 )
 
 func TestMainRunsTheAnalyzer(t *testing.T) {

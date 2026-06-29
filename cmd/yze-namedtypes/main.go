@@ -4,8 +4,9 @@
 package main
 
 import (
-	namedtypes "github.com/gomatic/yze-go-namedtypes"
 	"golang.org/x/tools/go/analysis/singlechecker"
+
+	namedtypes "github.com/gomatic/yze-namedtypes"
 )
 
 // run is the analysis entry point, indirected so the binary's wiring is testable

@@ -26,7 +26,6 @@ var Analyzer = &analysis.Analyzer{
 // Registration declares this analyzer to the yze framework.
 var Registration = goyze.Registration{
 	Name:       "namedtypes",
-	Group:      "go",
 	Categories: []goyze.Category{"types"},
 	URL:        "https://docs.gomatic.dev/yze/go/namedtypes",
 	Analyzer:   Analyzer,
