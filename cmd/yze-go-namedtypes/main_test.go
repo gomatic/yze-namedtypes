@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/tools/go/analysis"
 
-	namedtypes "github.com/gomatic/yze-namedtypes"
+	namedtypes "github.com/gomatic/yze-go-namedtypes"
 )
 
 func TestMainRunsTheAnalyzer(t *testing.T) {

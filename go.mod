@@ -1,4 +1,4 @@
-module github.com/gomatic/yze-namedtypes
+module github.com/gomatic/yze-go-namedtypes
 
 go 1.26.4
 

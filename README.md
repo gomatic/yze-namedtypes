@@ -1,4 +1,4 @@
-# yze-namedtypes
+# yze-go-namedtypes
 
 A [`yze`](https://github.com/gomatic/yze) analyzer (category `types`) enforcing the gomatic Go standard that function parameters use named domain types rather than bare primitives.
 
@@ -6,6 +6,6 @@ v1 flags parameters of non-method function declarations whose type is a bare pre
 
 - **Rule:** `yze/namedtypes`
 - **Library:** exports `Analyzer` and `Registration` for the [`yze`](https://github.com/gomatic/yze) aggregator and [`stickler`](https://github.com/gomatic/stickler) runner.
-- **Binary:** `cmd/yze-namedtypes` runs it standalone (`text`/`-json`, and as a `go vet -vettool`).
+- **Binary:** `cmd/yze-go-namedtypes` runs it standalone (`text`/`-json`, and as a `go vet -vettool`).
 
 Built on the [`go-yze`](https://github.com/gomatic/go-yze) framework.

@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/tools/go/analysis/analysistest"
 
-	namedtypes "github.com/gomatic/yze-namedtypes"
+	namedtypes "github.com/gomatic/yze-go-namedtypes"
 )
 
 func TestBarePrimitiveParameterIsReported(t *testing.T) {
