@@ -13,6 +13,10 @@ func TestBarePrimitiveParameterIsReported(t *testing.T) {
 	analysistest.Run(t, analysistest.TestData(), namedtypes.Analyzer, "a")
 }
 
+func TestSuggestedFixesIntroduceSkeletonTypes(t *testing.T) {
+	analysistest.RunWithSuggestedFixes(t, analysistest.TestData(), namedtypes.Analyzer, "fix")
+}
+
 func TestRegistrationIsWellFormed(t *testing.T) {
 	assert.NoError(t, namedtypes.Registration.Validate())
 	assert.Equal(t, "yze/namedtypes", namedtypes.Registration.RuleID())

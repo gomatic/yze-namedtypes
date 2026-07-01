@@ -6,6 +6,7 @@
 package namedtypes
 
 import (
+	"fmt"
 	"go/ast"
 	"go/types"
 
@@ -32,30 +33,41 @@ var Registration = goyze.Registration{
 }
 
 // run reports bare-primitive parameters of non-method function declarations.
+// The fixed set deduplicates proposed skeleton type names across the pass, so
+// only the first (by position) of several diagnostics minting the same name
+// carries the fix.
 func run(pass *analysis.Pass) (any, error) {
 	insp := pass.ResultOf[inspect.Analyzer].(*inspector.Inspector)
+	fixed := map[identName]bool{}
 	insp.Preorder([]ast.Node{(*ast.FuncDecl)(nil)}, func(n ast.Node) {
 		if fn := n.(*ast.FuncDecl); fn.Recv == nil {
-			checkParams(pass, fn.Type.Params)
+			checkParams(pass, fn, fixed)
 		}
 	})
 	return nil, nil
 }
 
-// checkParams reports each parameter whose type is a bare primitive. A
+// checkParams reports each parameter whose type is a bare primitive, attaching
+// the naming-oracle suggested fix when one can be built safely (see fix.go). A
 // parameter whose every name is the blank identifier is exempt: it exists only
 // to satisfy a signature the package does not control (an interface method, a
 // framework contract), the function cannot use its value, and no domain
 // concept exists to name.
-func checkParams(pass *analysis.Pass, params *ast.FieldList) {
-	for _, field := range params.List {
+func checkParams(pass *analysis.Pass, fn *ast.FuncDecl, fixed map[identName]bool) {
+	for _, field := range fn.Type.Params.List {
 		if allBlank(field.Names) {
 			continue
 		}
 		typ := paramType(field.Type)
-		if name, ok := barePrimitiveName(pass, typ); ok {
-			pass.Reportf(typ.Pos(), "parameter type %s is a bare primitive; define a named domain type", name)
+		name, ok := barePrimitiveName(pass, typ)
+		if !ok {
+			continue
 		}
+		pass.Report(analysis.Diagnostic{
+			Pos:            typ.Pos(),
+			Message:        fmt.Sprintf("parameter type %s is a bare primitive; define a named domain type", name),
+			SuggestedFixes: suggestedFixes(pass, fn, field, name, fixed),
+		})
 	}
 }
 
@@ -95,7 +107,7 @@ func paramType(expr ast.Expr) ast.Expr {
 //   - a predeclared object lives in the universe scope (Pkg() == nil); only one
 //     whose underlying type is a primitive (excludes the predeclared error/any
 //     interfaces, while still catching the byte/rune primitive aliases) is flagged.
-func barePrimitiveName(pass *analysis.Pass, expr ast.Expr) (string, bool) {
+func barePrimitiveName(pass *analysis.Pass, expr ast.Expr) (identName, bool) {
 	ident, ok := expr.(*ast.Ident)
 	if !ok {
 		return "", false
@@ -107,5 +119,5 @@ func barePrimitiveName(pass *analysis.Pass, expr ast.Expr) (string, bool) {
 	if _, ok := obj.Type().Underlying().(*types.Basic); !ok {
 		return "", false
 	}
-	return ident.Name, true
+	return identName(ident.Name), true
 }

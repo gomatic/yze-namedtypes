@@ -1,0 +1,128 @@
+package fix
+
+// existingParam already occupies the name the collide fix would mint, so
+// collide below stays diagnostic-only.
+type existingParam int
+
+// dirParam names the dir parameter of withDir; rename it to the real domain concept.
+type dirParam string
+
+// withDir is the basic case: an unexported function with a single named string
+// parameter, used in the body and called in-package, so the naming-oracle fix
+// applies — skeleton type, retyped parameter, converted uses, wrapped call.
+func withDir(dir dirParam) string { // want `parameter type string is a bare primitive; define a named domain type`
+	if string(dir) == "" {
+		return "."
+	}
+	return string(dir) + "/x"
+}
+
+// dirCaller passes a bare string argument, so the call-site argument is
+// wrapped in the minted type.
+func dirCaller() string {
+	return withDir(dirParam("root"))
+}
+
+// nParam names the n parameter of withCount; rename it to the real domain concept.
+type nParam int
+
+// withCount covers int: the body use is converted back to the primitive; the
+// local assignment does not write to the parameter, so the fix still applies.
+func withCount(n nParam) int { // want `parameter type int is a bare primitive; define a named domain type`
+	doubled := int(n) * 2
+	return doubled
+}
+
+// rParam names the r parameter of withRune; rename it to the real domain concept.
+type rParam rune
+
+func withRune(r rParam) bool { // want `parameter type rune is a bare primitive; define a named domain type`
+	return rune(r) == 'x'
+}
+
+// multiName shares one field across two names; the fix is skipped for
+// simplicity, so the diagnostic stands alone.
+func multiName(a, b string) string { // want `parameter type string is a bare primitive; define a named domain type`
+	return a + b
+}
+
+// variadicOnly keeps its diagnostic, but slice conversions do not exist, so no
+// fix is attached.
+func variadicOnly(nums ...int) {} // want `parameter type int is a bare primitive; define a named domain type`
+
+// Exported functions have out-of-package callers the pass cannot rewrite; the
+// diagnostic carries no fix.
+func Exported(s string) bool { // want `parameter type string is a bare primitive; define a named domain type`
+	return s == ""
+}
+
+// collide would mint existingParam, which the package already declares; no fix.
+func collide(existing string) bool { // want `parameter type string is a bare primitive; define a named domain type`
+	return existing == ""
+}
+
+// dupParam names the dup parameter of firstDup; rename it to the real domain concept.
+type dupParam string
+
+// firstDup and secondDup would both mint dupParam; only the first (by
+// position) carries the fix — `--fix` users iterate to fixpoint.
+func firstDup(dup dupParam) string { // want `parameter type string is a bare primitive; define a named domain type`
+	return string(dup)
+}
+
+func secondDup(dup int) int { // want `parameter type int is a bare primitive; define a named domain type`
+	return dup + 1
+}
+
+// assigned writes to its parameter, so retyping it is unsafe; no fix.
+func assigned(s string) string { // want `parameter type string is a bare primitive; define a named domain type`
+	s = "prefix/" + s
+	return s
+}
+
+// incremented mutates its parameter with an inc/dec statement; no fix.
+func incremented(n int) int { // want `parameter type int is a bare primitive; define a named domain type`
+	n++
+	return n
+}
+
+// rangeAssigned assigns its parameter in a `=`-form range clause; no fix.
+func rangeAssigned(s string) string { // want `parameter type string is a bare primitive; define a named domain type`
+	for _, s = range []string{"a"} {
+		continue
+	}
+	return s
+}
+
+// addressed has its parameter's address taken; a conversion is not
+// addressable, so no fix.
+func addressed(s string) *string { // want `parameter type string is a bare primitive; define a named domain type`
+	return &s
+}
+
+// handler references valueUsed as a value, so its signature change would
+// propagate beyond rewritable call sites; no fix.
+var handler = valueUsed
+
+func valueUsed(s string) bool { // want `parameter type string is a bare primitive; define a named domain type`
+	return s == ""
+}
+
+// pairArgs is called with a spread multi-value call, which cannot be wrapped;
+// both parameters stay diagnostic-only.
+func pairArgs(a int, b string) string { // want `type int is a bare primitive` `type string is a bare primitive`
+	return b[a:]
+}
+
+func pairSource() (int, string) { return 1, "xy" }
+
+func spreadCaller() string { return pairArgs(pairSource()) }
+
+// recursive passes its own parameter expression back to itself; the argument
+// wrap would occupy the same positions as the body conversions, so no fix.
+func recursive(depth int) int { // want `parameter type int is a bare primitive; define a named domain type`
+	if depth <= 0 {
+		return 0
+	}
+	return recursive(depth - 1)
+}

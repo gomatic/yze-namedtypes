@@ -1,0 +1,315 @@
+package namedtypes
+
+// This file builds the "naming oracle" suggested fix: for an eligible bare-
+// primitive parameter it mechanically introduces a named skeleton type derived
+// from the parameter name (<param>Param), retypes the parameter, converts every
+// body use back to the primitive, and wraps every in-package call-site argument
+// in the new type. The result is deliberately a rename-me skeleton, not the
+// final domain name; it must always compile within the files the pass can see.
+
+import (
+	"fmt"
+	"go/ast"
+	"go/token"
+	"go/types"
+	"strings"
+
+	"golang.org/x/tools/go/analysis"
+)
+
+// identName names an identifier the fix mints or inspects: a proposed type
+// name, a predeclared primitive, or a parameter name.
+type identName string
+
+// sourcePath is a file path as reported by the pass's FileSet.
+type sourcePath string
+
+// flatIndex is a zero-based position in a flattened parameter list, counting
+// every name of every field.
+type flatIndex int
+
+// flatLen is the flattened length of a parameter list.
+type flatLen int
+
+// typeNameSuffix marks the minted type as a mechanical skeleton: <param>Param
+// is unexported, grammatically neutral, and obviously awaiting a real name.
+const typeNameSuffix identName = "Param"
+
+// suggestedFixes yields the single naming-oracle fix for the flagged parameter
+// field of fn, or nil when the fix cannot be guaranteed to compile within the
+// pass: the function or parameter shape is ineligible, the parameter is
+// mutated or addressed, the proposed type name is taken (or already minted by
+// an earlier diagnostic in this pass — `--fix` users iterate to fixpoint), or
+// a call site cannot be safely rewritten.
+func suggestedFixes(
+	pass *analysis.Pass,
+	fn *ast.FuncDecl,
+	field *ast.Field,
+	primitive identName,
+	fixed map[identName]bool,
+) []analysis.SuggestedFix {
+	if !fixEligible(sourcePath(pass.Fset.Position(fn.Pos()).Filename), fn, field) ||
+		unsafeUse(pass.TypesInfo, fn.Body, pass.TypesInfo.Defs[field.Names[0]]) {
+		return nil
+	}
+	name := identName(field.Names[0].Name) + typeNameSuffix
+	if fixed[name] || nameTaken(pass.TypesInfo, name) {
+		return nil
+	}
+	args, ok := wrappableArguments(pass, fn, paramIndex(fn.Type.Params, field), paramCount(fn.Type.Params))
+	if !ok {
+		return nil
+	}
+	fixed[name] = true
+	return []analysis.SuggestedFix{{
+		Message:   fmt.Sprintf("introduce named type %s for parameter %s", name, field.Names[0].Name),
+		TextEdits: fixEdits(pass.TypesInfo, fn, field, name, primitive, args),
+	}}
+}
+
+// fixEligible reports whether the flagged parameter may be retyped at all: the
+// function is unexported (exported functions have out-of-package callers the
+// pass cannot rewrite), declared in a non-test file (the production driver
+// loads packages without test files), has a body to rewrite, and the field
+// declares exactly one name (a shared `a, b string` field is skipped for
+// simplicity) that is not variadic (slice conversions do not exist).
+func fixEligible(path sourcePath, fn *ast.FuncDecl, field *ast.Field) bool {
+	return !fn.Name.IsExported() &&
+		!strings.HasSuffix(string(path), "_test.go") &&
+		fn.Body != nil &&
+		len(field.Names) == 1 &&
+		!isVariadic(field)
+}
+
+// isVariadic reports whether the field is a variadic parameter.
+func isVariadic(field *ast.Field) bool {
+	_, ok := field.Type.(*ast.Ellipsis)
+	return ok
+}
+
+// unsafeUse reports whether obj is used inside body in a way that retyping the
+// parameter cannot survive: written to (assignment LHS, increment/decrement,
+// or a `=`-form range clause) or having its address taken (a conversion is not
+// addressable, and the resulting pointer type would leak the new type).
+func unsafeUse(info *types.Info, body *ast.BlockStmt, obj types.Object) bool {
+	unsafe := false
+	ast.Inspect(body, func(n ast.Node) bool {
+		unsafe = unsafe || nodeMutates(info, n, obj)
+		return !unsafe
+	})
+	return unsafe
+}
+
+// nodeMutates reports whether n writes to obj or takes its address.
+func nodeMutates(info *types.Info, n ast.Node, obj types.Object) bool {
+	switch node := n.(type) {
+	case *ast.AssignStmt:
+		return anyIdentIs(info, node.Lhs, obj)
+	case *ast.IncDecStmt:
+		return identIs(info, node.X, obj)
+	case *ast.RangeStmt:
+		return node.Tok == token.ASSIGN &&
+			(identIs(info, node.Key, obj) || identIs(info, node.Value, obj))
+	case *ast.UnaryExpr:
+		return node.Op == token.AND && identIs(info, node.X, obj)
+	}
+	return false
+}
+
+// identIs reports whether expr is an identifier resolving to obj.
+func identIs(info *types.Info, expr ast.Expr, obj types.Object) bool {
+	ident, ok := expr.(*ast.Ident)
+	return ok && info.ObjectOf(ident) == obj
+}
+
+// anyIdentIs reports whether any expression in exprs is an identifier
+// resolving to obj.
+func anyIdentIs(info *types.Info, exprs []ast.Expr, obj types.Object) bool {
+	for _, expr := range exprs {
+		if identIs(info, expr, obj) {
+			return true
+		}
+	}
+	return false
+}
+
+// nameTaken reports whether name is already declared by any identifier in the
+// package's files. This is deliberately more conservative than a scope walk: a
+// hit in any scope — package, file, or local — skips the fix rather than risk
+// a shadowed reference at a rewritten call site.
+func nameTaken(info *types.Info, name identName) bool {
+	for _, obj := range info.Defs {
+		if obj != nil && obj.Name() == string(name) {
+			return true
+		}
+	}
+	return false
+}
+
+// paramIndex yields target's zero-based position in the flattened parameter
+// list, counting every name of every preceding field.
+func paramIndex(params *ast.FieldList, target *ast.Field) flatIndex {
+	index := flatIndex(0)
+	for _, field := range params.List {
+		if field == target {
+			break
+		}
+		index += flatIndex(len(field.Names))
+	}
+	return index
+}
+
+// paramCount yields the flattened length of the parameter list.
+func paramCount(params *ast.FieldList) flatLen {
+	count := flatLen(0)
+	for _, field := range params.List {
+		count += flatLen(len(field.Names))
+	}
+	return count
+}
+
+// wrappableArguments yields the argument expression at index of every call to
+// fn within the pass, or false when a rewrite cannot be guaranteed to compile:
+// fn is referenced as a value somewhere (its signature change would propagate
+// beyond the calls the fix rewrites), a call does not pass exactly count
+// single-valued arguments (a spread `f(g())` call cannot be wrapped), or fn
+// calls itself (the argument wrap would collide with the same fix's body-use
+// conversions).
+func wrappableArguments(
+	pass *analysis.Pass,
+	fn *ast.FuncDecl,
+	index flatIndex,
+	count flatLen,
+) ([]ast.Expr, bool) {
+	obj := pass.TypesInfo.Defs[fn.Name]
+	calls := functionCalls(pass.TypesInfo, pass.Files, obj)
+	if countUses(pass.TypesInfo, pass.Files, obj) != len(calls) {
+		return nil, false
+	}
+	args, ok := callArguments(calls, index, count)
+	if !ok || selfCall(fn, args) {
+		return nil, false
+	}
+	return args, true
+}
+
+// functionCalls collects every call expression in files whose callee is obj.
+func functionCalls(info *types.Info, files []*ast.File, obj types.Object) []*ast.CallExpr {
+	var calls []*ast.CallExpr
+	for _, file := range files {
+		ast.Inspect(file, func(n ast.Node) bool {
+			if call, ok := n.(*ast.CallExpr); ok && identIs(info, ast.Unparen(call.Fun), obj) {
+				calls = append(calls, call)
+			}
+			return true
+		})
+	}
+	return calls
+}
+
+// countUses counts every identifier in files that uses obj, so a caller can
+// detect uses that are not direct calls.
+func countUses(info *types.Info, files []*ast.File, obj types.Object) int {
+	count := 0
+	for _, file := range files {
+		ast.Inspect(file, func(n ast.Node) bool {
+			if ident, ok := n.(*ast.Ident); ok && info.Uses[ident] == obj {
+				count++
+			}
+			return true
+		})
+	}
+	return count
+}
+
+// callArguments yields the argument at index from each call, or false when a
+// call does not pass exactly count arguments (a spread multi-value call, or a
+// variadic call with a different argument count).
+func callArguments(calls []*ast.CallExpr, index flatIndex, count flatLen) ([]ast.Expr, bool) {
+	args := make([]ast.Expr, 0, len(calls))
+	for _, call := range calls {
+		if flatLen(len(call.Args)) != count {
+			return nil, false
+		}
+		args = append(args, call.Args[int(index)])
+	}
+	return args, true
+}
+
+// selfCall reports whether any collected argument lies inside fn's own body —
+// a recursive call, whose argument wrap would occupy the same positions as the
+// body-use conversions of the same fix.
+func selfCall(fn *ast.FuncDecl, args []ast.Expr) bool {
+	for _, arg := range args {
+		if fn.Body.Pos() <= arg.Pos() && arg.Pos() < fn.Body.End() {
+			return true
+		}
+	}
+	return false
+}
+
+// paramUses collects every identifier in body that uses obj. The fix wraps
+// each in a conversion back to the primitive; assignment targets never appear
+// here because a mutated parameter is rejected by unsafeUse, and the declaring
+// identifier is a definition, not a use.
+func paramUses(info *types.Info, body *ast.BlockStmt, obj types.Object) []*ast.Ident {
+	var uses []*ast.Ident
+	ast.Inspect(body, func(n ast.Node) bool {
+		if ident, ok := n.(*ast.Ident); ok && info.Uses[ident] == obj {
+			uses = append(uses, ident)
+		}
+		return true
+	})
+	return uses
+}
+
+// fixEdits assembles the fix: the skeleton type declaration above fn, the
+// parameter retype, a conversion back to the primitive around every body use
+// (conservative — it over-converts, but always compiles), and a wrap of every
+// call-site argument in the new type.
+func fixEdits(
+	info *types.Info,
+	fn *ast.FuncDecl,
+	field *ast.Field,
+	name identName,
+	primitive identName,
+	args []ast.Expr,
+) []analysis.TextEdit {
+	uses := paramUses(info, fn.Body, info.Defs[field.Names[0]])
+	edits := make([]analysis.TextEdit, 0, 2+2*len(uses)+2*len(args))
+	edits = append(edits,
+		declEdit(fn, identName(field.Names[0].Name), name, primitive),
+		analysis.TextEdit{Pos: field.Type.Pos(), End: field.Type.End(), NewText: []byte(name)},
+	)
+	for _, use := range uses {
+		edits = append(edits, wrapEdits(use, primitive)...)
+	}
+	for _, arg := range args {
+		edits = append(edits, wrapEdits(arg, name)...)
+	}
+	return edits
+}
+
+// declEdit inserts the skeleton type declaration immediately above fn — before
+// its doc comment when it has one — with a comment telling the developer to
+// rename the type to the real domain concept.
+func declEdit(fn *ast.FuncDecl, param, name, primitive identName) analysis.TextEdit {
+	pos := fn.Pos()
+	if fn.Doc != nil {
+		pos = fn.Doc.Pos()
+	}
+	text := fmt.Sprintf(
+		"// %s names the %s parameter of %s; rename it to the real domain concept.\ntype %s %s\n\n",
+		name, param, fn.Name.Name, name, primitive,
+	)
+	return analysis.TextEdit{Pos: pos, End: pos, NewText: []byte(text)}
+}
+
+// wrapEdits wraps expr in a conversion to the named type or primitive `with`
+// using two insertions, so the fix never needs the source text of expr.
+func wrapEdits(expr ast.Expr, with identName) []analysis.TextEdit {
+	return []analysis.TextEdit{
+		{Pos: expr.Pos(), End: expr.Pos(), NewText: []byte(string(with) + "(")},
+		{Pos: expr.End(), End: expr.End(), NewText: []byte(")")},
+	}
+}
