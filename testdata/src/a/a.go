@@ -55,3 +55,15 @@ type T struct{}
 // method has a pointer/value receiver; methods are deferred in v1 and the bare
 // primitive parameter must not be flagged.
 func (T) method(a int) {}
+
+// blankParam satisfies an externally-controlled signature; a blank-named
+// parameter cannot be used, so it is exempt and must not be flagged.
+func blankParam(_ string, _ ...string) {}
+
+// mixedBlank names one identifier in a shared field, so the field is NOT
+// exempt and its bare primitive type is flagged.
+func mixedBlank(_, used string) {} // want `parameter type string is a bare primitive`
+
+// unnamedParam leaves the parameter unnamed rather than explicitly blank; it
+// still shapes the signature and is flagged.
+func unnamedParam(string) {} // want `parameter type string is a bare primitive`

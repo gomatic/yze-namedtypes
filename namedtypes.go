@@ -42,14 +42,36 @@ func run(pass *analysis.Pass) (any, error) {
 	return nil, nil
 }
 
-// checkParams reports each parameter whose type is a bare primitive.
+// checkParams reports each parameter whose type is a bare primitive. A
+// parameter whose every name is the blank identifier is exempt: it exists only
+// to satisfy a signature the package does not control (an interface method, a
+// framework contract), the function cannot use its value, and no domain
+// concept exists to name.
 func checkParams(pass *analysis.Pass, params *ast.FieldList) {
 	for _, field := range params.List {
+		if allBlank(field.Names) {
+			continue
+		}
 		typ := paramType(field.Type)
 		if name, ok := barePrimitiveName(pass, typ); ok {
 			pass.Reportf(typ.Pos(), "parameter type %s is a bare primitive; define a named domain type", name)
 		}
 	}
+}
+
+// allBlank reports whether the field declares names and every one is the blank
+// identifier. An unnamed field (no names at all) is not exempt: it still shapes
+// the function's public signature.
+func allBlank(names []*ast.Ident) bool {
+	if len(names) == 0 {
+		return false
+	}
+	for _, name := range names {
+		if name.Name != "_" {
+			return false
+		}
+	}
+	return true
 }
 
 // paramType yields the element type of a variadic parameter (the type after the
