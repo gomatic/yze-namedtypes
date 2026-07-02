@@ -1,0 +1,191 @@
+package fix
+
+import "other"
+
+// FilePath is an existing named domain type; the reuse fixes below adopt it
+// instead of minting a skeleton.
+type FilePath string
+
+// writeRoot mirrors the gomatic/go-rewrite shape: its only call site already
+// converts from FilePath, so the fix retypes the parameter to FilePath,
+// converts the body uses back to the primitive, and drops the call-site
+// conversion.
+func writeRoot(name FilePath) string { // want `parameter type string is a bare primitive; define a named domain type`
+	if string(name) == "" {
+		return "."
+	}
+	return string(name) + "/root"
+}
+
+func writeCaller(path FilePath) string {
+	return writeRoot(path)
+}
+
+// Label is reused by tagged even though a second call site passes an untyped
+// constant; the constant argument is wrapped in Label.
+type Label string
+
+func tagged(label Label) string { // want `parameter type string is a bare primitive; define a named domain type`
+	return "#" + string(label)
+}
+
+func tagCaller(l Label) string {
+	return tagged(l)
+}
+
+func tagDefault() string {
+	return tagged(Label("general"))
+}
+
+// Retries is reused by two different functions in one pass: reuse mints no
+// name, so the per-pass minted-name dedupe does not apply and both
+// diagnostics carry fixes.
+type Retries int
+
+func waitFor(attempts Retries) int { // want `parameter type int is a bare primitive; define a named domain type`
+	return int(attempts) * 100
+}
+
+func retryLoop(times Retries) int { // want `parameter type int is a bare primitive; define a named domain type`
+	return int(times) + 1
+}
+
+func retriesCaller(r Retries) int {
+	return waitFor(r) + retryLoop(r)
+}
+
+// Owner and Repo feed slug's two flagged parameters through ONE call
+// expression; each reuse fix edits only its own argument range, so the two
+// fixes never conflict.
+type Owner string
+
+// Repo is the reuse candidate for slug's second parameter.
+type Repo string
+
+func slug(owner Owner, repo Repo) string { // want `string is a bare primitive` `string is a bare primitive`
+	return string(owner) + "/" + string(repo)
+}
+
+func slugCaller(o Owner, r Repo) string {
+	return slug(o, r)
+}
+
+// City and Town disagree on the reuse candidate for locate, so the skeleton
+// fix applies instead.
+type City string
+
+// Town is the second, disagreeing reuse candidate for locate.
+type Town string
+
+// placeParam names the place parameter of locate; rename it to the real domain concept.
+type placeParam string
+
+func locate(place placeParam) string { // want `parameter type string is a bare primitive; define a named domain type`
+	return string(place)
+}
+
+func cityCaller(c City) string {
+	return locate(placeParam(string(c)))
+}
+
+func townCaller(t Town) string {
+	return locate(placeParam(string(t)))
+}
+
+// Pathish is an alias, not a defined type; a conversion from it does not
+// trigger reuse and the skeleton fix applies.
+type Pathish = string
+
+// pParam names the p parameter of fromAlias; rename it to the real domain concept.
+type pParam string
+
+func fromAlias(p pParam) string { // want `parameter type string is a bare primitive; define a named domain type`
+	return string(p)
+}
+
+func aliasCaller(p Pathish) string {
+	return fromAlias(pParam(string(p)))
+}
+
+// Fahrenheit's underlying type is float64, not int, so the conversion int(f)
+// does not trigger reuse and the skeleton fix applies.
+type Fahrenheit float64
+
+// degParam names the deg parameter of chill; rename it to the real domain concept.
+type degParam int
+
+func chill(deg degParam) int { // want `parameter type int is a bare primitive; define a named domain type`
+	return int(deg) - 1
+}
+
+func chillCaller(f Fahrenheit) int {
+	return chill(degParam(int(f)))
+}
+
+// Tag is generic; its instances cannot be spelled as a bare parameter type,
+// so reuse is skipped and the skeleton fix applies.
+type Tag[T any] string
+
+// gParam names the g parameter of withTag; rename it to the real domain concept.
+type gParam string
+
+func withTag(g gParam) string { // want `parameter type string is a bare primitive; define a named domain type`
+	return string(g)
+}
+
+func tagUser(t Tag[int]) string {
+	return withTag(gParam(string(t)))
+}
+
+// widthParam names the width parameter of span; rename it to the real domain concept.
+type widthParam int
+
+// span's only conversion argument comes from a type declared in another
+// package; reuse is same-package only, so the skeleton fix applies.
+func span(width widthParam) int { // want `parameter type int is a bare primitive; define a named domain type`
+	return int(width) * 2
+}
+
+func spanCaller(d other.Distance) int {
+	return span(widthParam(int(d)))
+}
+
+// sParam names the s parameter of rawMixed; rename it to the real domain concept.
+type sParam string
+
+// rawMixed's second call passes a non-constant expression that is not a
+// conversion from a named type, so reuse cannot hold and the skeleton fix
+// wraps every call site.
+func rawMixed(s sParam) string { // want `parameter type string is a bare primitive; define a named domain type`
+	return string(s)
+}
+
+func render(fp FilePath) string {
+	return string(fp)
+}
+
+func rawCaller(fp FilePath) string {
+	return rawMixed(sParam(string(fp))) + rawMixed(sParam(render(fp)))
+}
+
+// Marker would be reused by mark, but the constant call site below sits where
+// a local declaration shadows Marker, so the wrap cannot reference it and the
+// skeleton fix applies.
+type Marker string
+
+// mParam names the m parameter of mark; rename it to the real domain concept.
+type mParam string
+
+func mark(m mParam) string { // want `parameter type string is a bare primitive; define a named domain type`
+	return string(m)
+}
+
+func markCaller(v Marker) string {
+	return mark(mParam(string(v)))
+}
+
+func markShadowed() string {
+	type Marker struct{}
+	_ = Marker{}
+	return mark(mParam("x"))
+}

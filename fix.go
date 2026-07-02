@@ -1,11 +1,14 @@
 package namedtypes
 
-// This file builds the "naming oracle" suggested fix: for an eligible bare-
-// primitive parameter it mechanically introduces a named skeleton type derived
-// from the parameter name (<param>Param), retypes the parameter, converts every
-// body use back to the primitive, and wraps every in-package call-site argument
-// in the new type. The result is deliberately a rename-me skeleton, not the
-// final domain name; it must always compile within the files the pass can see.
+// This file builds the "naming oracle" suggested fix for an eligible bare-
+// primitive parameter. It first attempts to reuse an existing same-package
+// named type when every in-pass call site already converts from that type
+// (see reuse.go); otherwise it mechanically introduces a named skeleton type
+// derived from the parameter name (<param>Param), retypes the parameter,
+// converts every body use back to the primitive, and wraps every in-package
+// call-site argument in the new type. The skeleton is deliberately a rename-me
+// placeholder, not the final domain name; either fix must always compile
+// within the files the pass can see.
 
 import (
 	"fmt"
@@ -36,11 +39,13 @@ type flatLen int
 const typeNameSuffix identName = "Param"
 
 // suggestedFixes yields the single naming-oracle fix for the flagged parameter
-// field of fn, or nil when the fix cannot be guaranteed to compile within the
+// field of fn, or nil when no fix can be guaranteed to compile within the
 // pass: the function or parameter shape is ineligible, the parameter is
-// mutated or addressed, the proposed type name is taken (or already minted by
-// an earlier diagnostic in this pass — `--fix` users iterate to fixpoint), or
-// a call site cannot be safely rewritten.
+// mutated or addressed, or a call site cannot be safely rewritten. When every
+// call site already converts from one existing same-package named type, the
+// fix reuses that type (see reuse.go); otherwise it mints a skeleton type,
+// skipped when the proposed name is taken (or already minted by an earlier
+// diagnostic in this pass — `--fix` users iterate to fixpoint).
 func suggestedFixes(
 	pass *analysis.Pass,
 	fn *ast.FuncDecl,
@@ -52,12 +57,29 @@ func suggestedFixes(
 		unsafeUse(pass.TypesInfo, fn.Body, pass.TypesInfo.Defs[field.Names[0]]) {
 		return nil
 	}
-	name := identName(field.Names[0].Name) + typeNameSuffix
-	if fixed[name] || nameTaken(pass.TypesInfo, name) {
-		return nil
-	}
 	args, ok := wrappableArguments(pass, fn, paramIndex(fn.Type.Params, field), paramCount(fn.Type.Params))
 	if !ok {
+		return nil
+	}
+	if fix, ok := reuseFix(pass, fn, field, primitive, args); ok {
+		return fix
+	}
+	return skeletonFix(pass, fn, field, primitive, fixed, args)
+}
+
+// skeletonFix yields the minting fix — a fresh <param>Param skeleton type —
+// or nil when the proposed name is already declared in the package or already
+// minted by an earlier diagnostic in this pass.
+func skeletonFix(
+	pass *analysis.Pass,
+	fn *ast.FuncDecl,
+	field *ast.Field,
+	primitive identName,
+	fixed map[identName]bool,
+	args []ast.Expr,
+) []analysis.SuggestedFix {
+	name := identName(field.Names[0].Name) + typeNameSuffix
+	if fixed[name] || nameTaken(pass.TypesInfo, name) {
 		return nil
 	}
 	fixed[name] = true
