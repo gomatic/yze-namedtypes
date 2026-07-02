@@ -79,13 +79,61 @@ func skeletonFix(
 	args []ast.Expr,
 ) []analysis.SuggestedFix {
 	name := identName(field.Names[0].Name) + typeNameSuffix
-	if fixed[name] || nameTaken(pass.TypesInfo, name) {
+	if fixed[name] {
+		return nil
+	}
+	prim := pass.TypesInfo.ObjectOf(field.Type.(*ast.Ident)).Type()
+	if named, ok := mintedType(pass.Pkg, name, prim); ok {
+		return mintedReuseFix(pass.Pkg, pass.TypesInfo, fn, field, primitive, named, args)
+	}
+	if nameTaken(pass.TypesInfo, name) {
 		return nil
 	}
 	fixed[name] = true
 	return []analysis.SuggestedFix{{
 		Message:   fmt.Sprintf("introduce named type %s for parameter %s", name, field.Names[0].Name),
 		TextEdits: fixEdits(pass.TypesInfo, fn, field, name, primitive, args),
+	}}
+}
+
+// mintedType reports the package-level defined type called name whose
+// underlying is exactly prim — typically the skeleton a previous --fix round
+// minted for a same-named parameter elsewhere in the package. A name held by
+// anything else (an alias, a generic type, a different underlying, a non-type)
+// does not qualify.
+func mintedType(pkg *types.Package, name identName, prim types.Type) (*types.Named, bool) {
+	obj, ok := pkg.Scope().Lookup(string(name)).(*types.TypeName)
+	if !ok || obj.IsAlias() {
+		return nil, false
+	}
+	named, ok := obj.Type().(*types.Named)
+	if !ok || named.TypeArgs().Len() != 0 || !types.Identical(named.Underlying(), prim) {
+		return nil, false
+	}
+	return named, true
+}
+
+// mintedReuseFix retypes the parameter to the already-minted skeleton type:
+// the same edits as minting minus the declaration. The name is written at the
+// parameter and at every call argument, so it must resolve unshadowed at each
+// of those positions; the fixpoint loop reaches this path on the round after
+// the first same-named parameter minted the type.
+func mintedReuseFix(
+	pkg *types.Package,
+	info *types.Info,
+	fn *ast.FuncDecl,
+	field *ast.Field,
+	primitive identName,
+	named *types.Named,
+	args []ast.Expr,
+) []analysis.SuggestedFix {
+	if !visibleAtAll(pkg, named, reusePositions(field, args)) {
+		return nil
+	}
+	name := identName(named.Obj().Name())
+	return []analysis.SuggestedFix{{
+		Message:   fmt.Sprintf("reuse the existing named type %s for this parameter", name),
+		TextEdits: retypeEdits(info, fn, field, name, primitive, args),
 	}}
 }
 
@@ -297,10 +345,24 @@ func fixEdits(
 	primitive identName,
 	args []ast.Expr,
 ) []analysis.TextEdit {
+	decl := declEdit(fn, identName(field.Names[0].Name), name, primitive)
+	return append([]analysis.TextEdit{decl}, retypeEdits(info, fn, field, name, primitive, args)...)
+}
+
+// retypeEdits are the declaration-free edits shared by the minting and the
+// minted-reuse fixes: retype the parameter, convert every body use back to
+// the primitive, and wrap every in-package call-site argument in the type.
+func retypeEdits(
+	info *types.Info,
+	fn *ast.FuncDecl,
+	field *ast.Field,
+	name identName,
+	primitive identName,
+	args []ast.Expr,
+) []analysis.TextEdit {
 	uses := paramUses(info, fn.Body, info.Defs[field.Names[0]])
-	edits := make([]analysis.TextEdit, 0, 2+2*len(uses)+2*len(args))
+	edits := make([]analysis.TextEdit, 0, 1+2*len(uses)+2*len(args))
 	edits = append(edits,
-		declEdit(fn, identName(field.Names[0].Name), name, primitive),
 		analysis.TextEdit{Pos: field.Type.Pos(), End: field.Type.End(), NewText: []byte(name)},
 	)
 	for _, use := range uses {

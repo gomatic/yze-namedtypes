@@ -1,0 +1,36 @@
+package fix
+
+// pathParam is a previously minted skeleton (as an earlier --fix round would
+// leave it): same name the parameter below proposes, same underlying.
+type pathParam string
+
+// stat inspects path; the proposed name pathParam already exists with the
+// right underlying, so the fix reuses it instead of re-minting.
+func stat(path string) int { // want `parameter type string is a bare primitive`
+	return len(path)
+}
+
+func statCaller() int { return stat("go.mod") }
+
+// sizeParam has a different underlying than the string parameter below, so
+// the name is taken and no fix attaches.
+type sizeParam int
+
+func size(size string) int { // want `parameter type string is a bare primitive`
+	return len(size)
+}
+
+// stampParam exists, but a local declaration shadows it at the call site, so
+// the minted-reuse fix must decline (the wrapped argument would resolve to
+// the local).
+type stampParam string
+
+func stamp(stamp string) int { // want `parameter type string is a bare primitive`
+	return len(stamp)
+}
+
+func stampCaller() int {
+	type stampParam struct{}
+	_ = stampParam{}
+	return stamp("spot")
+}
